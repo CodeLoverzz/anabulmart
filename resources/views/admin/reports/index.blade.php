@@ -63,9 +63,16 @@
         .print-card-item {
             border: 1px solid #ccc !important;
             padding: 10px !important;
-            border-radius: 8px !important;
+            border-radius: 0 !important;
             width: 32% !important;
             text-align: center !important;
+        }
+
+        /* [FIX] Paksa SEMUA sudut jadi kotak (0) saat print/PDF - sebelumnya
+           class Tailwind seperti rounded-2xl/rounded-xl masih terbawa dari
+           tampilan monitor karena tidak di-override di sini. */
+        *, *::before, *::after {
+            border-radius: 0 !important;
         }
 
         /* Tabel Cetak Presisi */
@@ -95,7 +102,7 @@
 <!-- KOP SURAT LAPORAN (HANYA MUNCUL SAAT DI-PRINT/SAVED AS PDF) -->
 <div class="print-kop">
     <h1>AnabulMart Petshop Medan</h1>
-    <p>Jl. Karya Wisata No. 88, Medan, Sumatera Utara | WA: 085175217503</p>
+    <p>Jl. Kasuari No. 13, Kec. Medan Sunggal, Kota Medan | WA: 085175217503</p>
     <p style="font-weight: bold; margin-top: 8px;">
         LAPORAN TRANSAKSI PENJUALAN 
         @if(request('start_date') && request('end_date'))

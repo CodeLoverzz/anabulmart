@@ -40,20 +40,31 @@ class CheckoutController extends Controller
         }
 
         $subtotal = 0;
+        $totalWeight = 0;
         foreach ($itemsToCheckout as $item) {
             $subtotal += ($item['price'] * $item['quantity']);
+            $totalWeight += (($item['weight_gram'] ?? 1000) * $item['quantity']);
         }
+        $totalWeight = max(1, $totalWeight); // API menolak berat 0
 
-        return view('checkout.index', compact('itemsToCheckout', 'subtotal', 'checkoutType'));
+        return view('checkout.index', compact('itemsToCheckout', 'subtotal', 'checkoutType', 'totalWeight'));
     }
 
     // 2. SIMPAN PESANAN PERMANEN KE DATABASE
     public function store(Request $request)
     {
         $request->validate([
-            'customer_name'    => 'required|string|max:255',
-            'customer_phone'   => 'required|string|max:20',
-            'shipping_address' => 'required|string',
+            'customer_name'      => 'required|string|max:255',
+            'customer_phone'     => 'required|string|max:20',
+            'shipping_address'   => 'required|string',
+            'destination_id'     => 'required|string',
+            'destination_label'  => 'required|string',
+            'shipping_courier'   => 'required|string',
+            'shipping_service'   => 'required|string',
+            'shipping_cost'      => 'required|numeric|min:0',
+        ], [
+            'destination_id.required'    => 'Silakan pilih wilayah tujuan pengiriman terlebih dahulu.',
+            'shipping_courier.required'  => 'Silakan pilih kurir & hitung ongkir terlebih dahulu.',
         ]);
 
         $checkoutType = $request->input('checkout_type', 'cart');
@@ -78,32 +89,66 @@ class CheckoutController extends Controller
             return redirect()->route('catalog.index')->with('error', 'Tidak ada item yang dapat diproses.');
         }
 
-        // Hitung Subtotal
+        // Hitung Subtotal & Total Berat
         $subtotal = 0;
+        $totalWeight = 0;
         foreach ($itemsToCheckout as $item) {
             $subtotal += ($item['price'] * $item['quantity']);
+            $totalWeight += (($item['weight_gram'] ?? 1000) * $item['quantity']);
         }
+
+        $shippingCost = (float) $request->shipping_cost;
+        $totalAmount = $subtotal + $shippingCost;
 
         // Nomor Order Unik
         $orderNumber = 'ORD-' . date('Ymd') . '-' . strtoupper(Str::random(4));
+
+        // [FIX] Validasi stok SEBELUM transaksi dibuat, supaya stok tidak pernah minus.
+        foreach ($itemsToCheckout as $item) {
+            $productId = $item['product_id'] ?? null;
+            $variantId = $item['variant_id'] ?? null;
+
+            if (!$variantId && $productId) {
+                $firstVariant = ProductVariant::where('product_id', $productId)->first();
+                $variantId = $firstVariant ? $firstVariant->id : null;
+            }
+
+            if (!empty($variantId)) {
+                $variant = ProductVariant::find($variantId);
+                if (!$variant || $variant->stock < $item['quantity']) {
+                    $nama = $variant->variant_name ?? 'produk';
+                    return redirect()->back()->with('error', "Stok \"$nama\" tidak mencukupi.")->withInput();
+                }
+            } elseif (!empty($productId)) {
+                $product = Product::find($productId);
+                if (!$product || $product->stock < $item['quantity']) {
+                    $nama = $product->name ?? 'produk';
+                    return redirect()->back()->with('error', "Stok \"$nama\" tidak mencukupi.")->withInput();
+                }
+            }
+        }
 
         DB::beginTransaction();
         try {
             // A. SIMPAN KE TABEL ORDERS
             $order = Order::create([
-                'order_number'      => $orderNumber,
-                'customer_name'     => $request->customer_name,
-                'customer_whatsapp' => $request->customer_phone,
-                'shipping_address'  => $request->shipping_address,
-                'city_id'           => $request->city_id ?? 444,
-                'subtotal'          => $subtotal,
-                'shipping_cost'     => 0,
-                'total_amount'      => $subtotal,
-                'status'            => 'pending',
-                'payment_proof'     => null,
-                'alasan_penolakan'  => null,
-                'received_proof'    => null,
-                'shipping_proof'    => null,
+                'order_number'       => $orderNumber,
+                'customer_name'      => $request->customer_name,
+                'customer_whatsapp'  => $request->customer_phone,
+                'shipping_address'   => $request->shipping_address,
+                'city_id'            => $request->destination_id,        // ID wilayah dari RajaOngkir (kelurahan/kecamatan)
+                'destination_label'  => $request->destination_label,     // Nama wilayah lengkap, untuk ditampilkan di admin
+                'subtotal'           => $subtotal,
+                'shipping_cost'      => $shippingCost,
+                'shipping_courier'   => $request->shipping_courier,
+                'shipping_service'   => $request->shipping_service,
+                'total_weight_gram'  => $totalWeight,
+                'total_amount'       => $totalAmount,
+                'status'             => 'pending',
+                'payment_proof'      => null,
+                'alasan_penolakan'   => null,
+                'received_proof'     => null,
+                'shipping_proof'     => null,
             ]);
 
             // B. SIMPAN KE TABEL ORDER_ITEMS

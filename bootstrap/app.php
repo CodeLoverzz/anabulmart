@@ -11,7 +11,11 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        //
+        // [FIX] Karena rute login sekarang bernama 'admin.login' (bukan default
+        // 'login'), Laravel perlu diberi tahu ke mana harus redirect saat ada
+        // yang belum login mencoba akses halaman ber-middleware 'auth'.
+        // Tanpa ini, akan muncul error "Route [login] not defined".
+        $middleware->redirectGuestsTo(fn () => route('admin.login'));
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //

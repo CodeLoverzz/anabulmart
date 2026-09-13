@@ -10,6 +10,7 @@ use App\Http\Controllers\CartController;
 use App\Http\Controllers\CheckoutController;
 use App\Http\Controllers\OrderStatusController;
 use App\Http\Controllers\MediaController;
+use App\Http\Controllers\ShippingController;
 use App\Http\Controllers\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Admin\ProductController as AdminProductController;
 use App\Http\Controllers\Admin\AuthController as AdminAuthController; // [FIX] sebelumnya tidak pernah di-import/dipakai
@@ -30,15 +31,15 @@ Route::get('/', function () {
 
 // [HAPUS] Rute /login lama (mengarah ke view 'auth.login' yang tidak pernah ada,
 // hanya dirujuk oleh welcome.blade.php yang juga tidak pernah ditampilkan).
-// Login yang dipakai aplikasi ini adalah /admin/login.
+// Login yang dipakai aplikasi ini sekarang ada di /login (lihat bagian bawah).
 // Halaman Katalog / Dashboard Utama Pembeli
-Route::get('/catalog', function () {
+Route::get('/anabulmart', function () {
     $products = Product::with('variants')->latest()->get();
     return view('catalog.index', compact('products'));
 })->name('catalog.index');
 
 // Detail Produk Pembeli
-Route::get('/catalog/{id}', function ($id) {
+Route::get('/anabulmart/{id}', function ($id) {
     $product = Product::with('variants')->findOrFail($id);
     return view('catalog.show', compact('product'));
 })->name('catalog.show');
@@ -56,6 +57,16 @@ Route::post('/checkout', [CheckoutController::class, 'store'])->name('checkout.s
 Route::get('/checkout/qris/{orderNumber}', [CheckoutController::class, 'qris'])->name('checkout.qris');
 Route::post('/checkout/upload/{orderNumber}', [CheckoutController::class, 'uploadPayment'])->name('checkout.upload');
 
+// [BARU] Endpoint AJAX untuk pencarian alamat & hitung ongkir di halaman checkout
+Route::prefix('shipping')->name('shipping.')->group(function () {
+    Route::get('/search', [ShippingController::class, 'search'])->name('search');
+    Route::get('/provinces', [ShippingController::class, 'provinces'])->name('provinces');
+    Route::get('/cities/{provinceId}', [ShippingController::class, 'cities'])->name('cities');
+    Route::get('/districts/{cityId}', [ShippingController::class, 'districts'])->name('districts');
+    Route::get('/subdistricts/{districtId}', [ShippingController::class, 'subdistricts'])->name('subdistricts');
+    Route::get('/cost', [ShippingController::class, 'cost'])->name('cost');
+});
+
 // Lacak Status Pesanan Pembeli
 Route::get('/cek-pesanan', [OrderStatusController::class, 'index'])->name('order.status');
 
@@ -64,15 +75,14 @@ Route::get('/media/{path}', [MediaController::class, 'show'])->where('path', '.*
 
 
 // =========================================================================
-// 2. LOGIN ADMIN (DI LUAR MIDDLEWARE AUTH, SUPAYA BISA DIAKSES SEBELUM LOGIN)
+// 2. LOGIN ADMIN
 // =========================================================================
-// [FIX] Rute ini sebelumnya tidak pernah didaftarkan sama sekali, sehingga
-// halaman login admin tidak bisa diakses dan admin.login route tidak ada.
+// [UBAH] URI dipindah dari /admin/login jadi /login (lebih pendek/gampang
+// diingat). Nama rute TETAP admin.login & admin.login.process supaya semua
+// route('admin.login...') di file lain tidak perlu diubah.
 
-Route::prefix('admin')->name('admin.')->group(function () {
-    Route::get('/login', [AdminAuthController::class, 'showLoginForm'])->name('login');
-    Route::post('/login', [AdminAuthController::class, 'login'])->name('login.process'); // [FIX] nama rute ini WAJIB ada karena resources/views/admin/login.blade.php memanggil route('admin.login.process')
-});
+Route::get('/login', [AdminAuthController::class, 'showLoginForm'])->name('admin.login');
+Route::post('/login', [AdminAuthController::class, 'login'])->name('admin.login.process');
 
 
 // =========================================================================
@@ -94,14 +104,86 @@ Route::prefix('admin')->name('admin.')->middleware('auth')->group(function () {
 
     // DASHBOARD ADMIN
     Route::get('/dashboard', function () use ($getAmountColumn) {
-        $amountCol     = $getAmountColumn();
-        $totalOrders   = Order::count();
-        $totalProducts = Product::count();
-        $totalRevenue  = Order::whereIn('status', ['delivered', 'selesai', 'completed'])->sum($amountCol) ?? 0;
-        $recentOrders  = Order::latest()->take(5)->get();
-        $pendingOrders = Order::whereIn('status', ['pending', 'waiting_confirmation'])->count();
+        $amountCol = $getAmountColumn();
+        $successStatuses = ['delivered', 'selesai', 'completed'];
+        $pendingStatuses = ['pending', 'waiting_confirmation', 'menunggu'];
 
-        $data = compact('totalOrders', 'totalProducts', 'totalRevenue', 'recentOrders', 'pendingOrders');
+        // ---------- KARTU RINGKASAN ----------
+        $totalOrders    = Order::count();
+        $totalProducts  = Product::count();
+        $totalRevenue   = Order::whereIn('status', $successStatuses)->sum($amountCol) ?? 0;
+        $recentOrders   = Order::latest()->take(5)->get();
+        $pendingOrders  = Order::whereIn('status', $pendingStatuses)->count();
+        $totalCustomers = Order::whereNotNull('customer_whatsapp')->distinct('customer_whatsapp')->count('customer_whatsapp');
+
+        // ---------- BAR CHART 1: OMZET 7 HARI TERAKHIR ----------
+        $rawDaily = Order::whereIn('status', $successStatuses)
+            ->where('created_at', '>=', now()->subDays(6)->startOfDay())
+            ->selectRaw('DATE(created_at) as tgl, SUM(' . $amountCol . ') as total')
+            ->groupBy('tgl')
+            ->pluck('total', 'tgl');
+
+        $salesChartLabels = [];
+        $salesChartData = [];
+        for ($i = 6; $i >= 0; $i--) {
+            $date = now()->subDays($i);
+            $key = $date->format('Y-m-d');
+            $salesChartLabels[] = $date->translatedFormat('D, d M');
+            $salesChartData[] = (float) ($rawDaily[$key] ?? 0);
+        }
+
+        // ---------- BAR CHART 2: 5 PRODUK TERLARIS (BY QTY) ----------
+        $topProductsRaw = DB::table('order_items')
+            ->join('product_variants', 'order_items.product_variant_id', '=', 'product_variants.id')
+            ->join('products', 'product_variants.product_id', '=', 'products.id')
+            ->selectRaw('products.name as product_name, SUM(order_items.quantity) as total_qty')
+            ->groupBy('products.id', 'products.name')
+            ->orderByDesc('total_qty')
+            ->take(5)
+            ->get();
+
+        $topProductLabels = $topProductsRaw->pluck('product_name')->map(fn($n) => \Illuminate\Support\Str::limit($n, 20))->toArray();
+        $topProductData   = $topProductsRaw->pluck('total_qty')->toArray();
+
+        // ---------- PIE CHART 1: DISTRIBUSI STATUS PESANAN ----------
+        $statusRaw = Order::selectRaw('status, COUNT(id) as jumlah')
+            ->groupBy('status')
+            ->pluck('jumlah', 'status');
+
+        $statusLabels = $statusRaw->keys()->map(fn($s) => ucwords(str_replace('_', ' ', $s ?: 'Tanpa Status')))->toArray();
+        $statusData   = $statusRaw->values()->toArray();
+
+        // ---------- PIE CHART 2: KONTRIBUSI OMZET PER KATEGORI PRODUK ----------
+        $categoryRaw = DB::table('order_items')
+            ->join('product_variants', 'order_items.product_variant_id', '=', 'product_variants.id')
+            ->join('products', 'product_variants.product_id', '=', 'products.id')
+            ->selectRaw('products.category, SUM(order_items.subtotal) as total')
+            ->groupBy('products.category')
+            ->orderByDesc('total')
+            ->get();
+
+        $categoryLabels = $categoryRaw->pluck('category')->toArray();
+        $categoryData   = $categoryRaw->pluck('total')->toArray();
+
+        // ---------- TOP 5 PELANGGAN (BY TOTAL BELANJA) ----------
+        $topCustomers = Order::selectRaw('customer_whatsapp as phone')
+            ->selectRaw('MAX(customer_name) as name')
+            ->selectRaw('COUNT(id) as total_orders')
+            ->selectRaw('SUM(' . $amountCol . ') as total_spent')
+            ->whereNotNull('customer_whatsapp')
+            ->groupBy('customer_whatsapp')
+            ->orderByDesc('total_spent')
+            ->take(5)
+            ->get();
+
+        $data = compact(
+            'totalOrders', 'totalProducts', 'totalRevenue', 'recentOrders', 'pendingOrders', 'totalCustomers',
+            'salesChartLabels', 'salesChartData',
+            'topProductLabels', 'topProductData',
+            'statusLabels', 'statusData',
+            'categoryLabels', 'categoryData',
+            'topCustomers'
+        );
 
         if (view()->exists('admin.dashboard')) return view('admin.dashboard', $data);
         if (view()->exists('admin.dashboard.index')) return view('admin.dashboard.index', $data);
@@ -146,11 +228,19 @@ Route::prefix('admin')->name('admin.')->middleware('auth')->group(function () {
 
     // 3. DATA PELANGGAN / CUSTOMERS (ADMIN)
     Route::get('/customers', function () {
-        $customers = Order::select('customer_name', 'customer_whatsapp', 'shipping_address')
+        // [FIX] Sebelumnya kolom tidak di-alias (customer_name, customer_whatsapp, shipping_address)
+        // padahal view admin.customers.index memanggil $customer->name / ->phone / ->address / ->total_spent
+        // sehingga nama, no HP, dan total belanja pelanggan selalu kosong/0.
+        // [FIX] Pengelompokan diganti jadi per nomor WhatsApp saja (bukan ikut shipping_address),
+        // supaya 1 pelanggan yang sama tidak terpecah jadi banyak baris hanya karena teks alamatnya beda tipis.
+        $customers = Order::selectRaw('customer_whatsapp as phone')
+            ->selectRaw('MAX(customer_name) as name')
+            ->selectRaw('MAX(shipping_address) as address')
             ->selectRaw('COUNT(id) as total_orders')
+            ->selectRaw('SUM(total_amount) as total_spent')
             ->selectRaw('MAX(created_at) as last_order_date')
-            ->groupBy('customer_name', 'customer_whatsapp', 'shipping_address')
-            ->latest('last_order_date')
+            ->groupBy('customer_whatsapp')
+            ->orderByDesc('last_order_date')
             ->paginate(15);
 
         if (view()->exists('admin.customers.index')) {
