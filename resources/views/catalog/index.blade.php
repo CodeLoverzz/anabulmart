@@ -12,7 +12,7 @@
     <div class="max-w-7xl mx-auto px-4 py-14 md:py-20 grid grid-cols-1 md:grid-cols-2 gap-10 items-center relative">
         <div>
             <span class="inline-flex items-center gap-2 bg-amber-100 text-amber-700 text-xs font-bold px-3 py-1.5 rounded-full mb-5">
-                <i class="fa-solid fa-location-dot"></i> Petshop Lokal Medan
+                <i class="fa-solid fa-location-dot"></i> Petshop Online Terbaik di Kota Medan
             </span>
 
             <h1 class="font-display text-4xl md:text-5xl font-bold text-[#2B2118] leading-tight mb-4">
@@ -20,7 +20,7 @@
             </h1>
 
             <p class="text-base text-gray-600 mb-8 max-w-md">
-                Menyediakan pakan anabul kesayangan anda.
+                Pesan mudah, bayar mudah, antar mudah.
             </p>
 
             <div class="flex flex-wrap items-center gap-3">
@@ -35,12 +35,12 @@
 
         <div class="relative">
             <div class="aspect-[4/3] rounded-3xl overflow-hidden border-4 border-white shadow-xl bg-amber-100">
-                <img src="https://placehold.co/800x600/FDE68A/78350F?text=Foto+Anabul+%26+Produk"
+                <img src="{{ asset('images/hero.png') }}"
                      alt="Anabul kesayangan AnabulMart"
                      class="w-full h-full object-cover">
             </div>
-            <p class="text-[10px] text-gray-400 text-center mt-2 italic">
-                *Ganti gambar ini dengan foto toko/produk asli di <code class="bg-gray-100 px-1 rounded">resources/views/catalog/index.blade.php</code>
+            <p class="text-[10px] text-gray-400 text-right mt-2 italic">
+                *Gambar hanya ilustrasi
             </p>
         </div>
     </div>
@@ -148,7 +148,7 @@
 <section id="tentang" class="bg-white border-t border-amber-100 scroll-mt-20">
     <div class="max-w-7xl mx-auto px-4 py-14 grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
         <div class="order-2 md:order-1 rounded-3xl overflow-hidden border-4 border-amber-50 shadow-md aspect-[4/3] bg-amber-50">
-            <img src="https://placehold.co/800x600/FEF3C7/92400E?text=Toko+AnabulMart"
+                 <img src="{{ asset('images/toko.png') }}"            
                  alt="Toko AnabulMart Petshop Medan"
                  class="w-full h-full object-cover">
         </div>
